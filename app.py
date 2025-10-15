@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINAL E COMPLETA - V4)
+# app.py (VERSÃO FINAL E COMPLETA - V4, Limpa)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
@@ -99,7 +99,7 @@ def extract_medical_data(text):
     cleaned_text = re.sub(r'[\*\[\]]', '', cleaned_text)
     cleaned_text = re.sub(r'\|', ' ', cleaned_text) 
     
-    # 🚨 NOVO TRUQUE: Remove a seção "Nome Social" inteira para evitar confusão.
+    # NOVO TRUQUE: Remove a seção "Nome Social" inteira para evitar confusão.
     cleaned_text = re.sub(r'89\s*-\s*Nome\s*Social.*?\d{1,2}\s*-\s*', ' ', cleaned_text, flags=re.IGNORECASE)
 
     # --- Padrões de Regex Otimizados ---
@@ -148,7 +148,7 @@ def extract_medical_data(text):
 
 
 # ==============================================================================
-# 4️⃣ Geração de Excel e Interface (COM A CORREÇÃO DO BUG)
+# 4️⃣ Geração de Excel e Interface (Sem tags HTML)
 # ==============================================================================
 
 def to_excel(df_to_export):
@@ -230,7 +230,7 @@ if uploaded_files:
                 st.write("Extraindo dados do texto...")
                 extracted_data = extract_medical_data(text)
                 
-                # *** CORREÇÃO DO BUG AQUI: 'warning' substituído por 'error' ***
+                # CORREÇÃO DO BUG: 'warning' substituído por 'error'
                 if all(v == "Não encontrado" for v in extracted_data.values()):
                     status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True) 
                 else:
@@ -287,4 +287,3 @@ if not st.session_state.processed_data.empty:
         )
 else:
     st.info("Aguardando o upload de arquivos para iniciar o processamento.")
-```</details>
