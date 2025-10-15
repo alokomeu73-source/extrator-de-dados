@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINAL E COMPLETA - V5, Refinada com Imagem de Referência)
+# app.py (VERSÃO FINAL E COMPLETA - V6, Correção Definitiva)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
@@ -83,7 +83,7 @@ def extract_text_from_pdf(pdf_file):
 
 
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX REFINADO COM IMAGEM REAL)
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX CORRIGIDO E ULTRA-ESPECÍFICO)
 # ==============================================================================
 def extract_medical_data(text):
     """Usa expressões regulares específicas e pré-limpeza para a Guia SP/SADT."""
@@ -94,63 +94,61 @@ def extract_medical_data(text):
         "Nome": "Não encontrado",
     }
 
-    # Pré-limpeza crucial: Remove quebras de linha e ruídos comuns de OCR
+    # Etapa 1: Pré-limpeza crucial
     cleaned_text = re.sub(r'[\n\r]+', ' ', text)
-    cleaned_text = re.sub(r'[\*\[\]\|]', ' ', cleaned_text) # Remove *, [], |
-    cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text)     # Normaliza espaços
+    cleaned_text = re.sub(r'[\*\[\]\|]', ' ', cleaned_text)
+    
+    # Etapa 2: REMOÇÃO ESTRATÉGICA DO CAMPO CONFUSO "NOME SOCIAL" (A CHAVE DA CORREÇÃO)
+    cleaned_text = re.sub(r'\d{1,2}\s*-\s*Nome\s*Social', 'CAMPO_NOME_SOCIAL_REMOVIDO', cleaned_text, flags=re.IGNORECASE)
 
-    # --- Padrões de Regex Otimizados e Resilientes ---
+    # Etapa 3: Normalizar espaços múltiplos que podem ter sido criados
+    cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text)
+
+    # --- Padrões de Regex Otimizados para o Layout Específico da Guia ---
     patterns = {
         # 1. Número GUIA (Alvo: "2 - Número Guia")
+        # Procura por "2 - Número Guia" e captura os dígitos que vêm depois.
+        # [0-9\s]+ permite que o OCR leia o número com espaços (ex: 1745 6856)
         "Número GUIA": [
-            # Prioridade 1: Padrão exato para a guia fornecida.
-            r'\d+\s*-\s*N[úu]mero\s*Guia\s*(\d+)\b',
-            # Fallbacks para outros layouts
-            r'N[ºo°\.\s-]*\s*Guia\s*Principal\s*[:\s]*(\d{6,10})\b',
-            r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})',
-            r'Guia\s*Atribuído\s*pela\s*Operadora\s*(\d{20})',
+            r'2\s*-\s*N[úu]mero\s*Guia\s*([0-9\s]+)\b'
         ],
         
-        # 2. Registro ANS (Alvo: "1 - Registro ANS")
+        # 2. Registro ANS (Alvo: "1 - Registro ANS", já estava funcionando bem)
         "Registro ANS": [
-            r'(?:Registro\s*ANS|ANS)\s*.*?(\d{6}\b)'
+            r'(?:1\s*-\s*)?Registro\s*ANS\s*.*?(\d{6})\b'
         ],
 
-        # 3. Data de Autorização (Alvo: "3 - Data de Autorização")
+        # 3. Data de Autorização (Alvo: "3 - Data de Autorização", já funcionando)
         "Data de Autorização": [
             r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})'
         ],
 
         # 4. Nome do Beneficiário (Alvo: "10 - Nome")
+        # Como removemos "Nome Social", este padrão agora só pode encontrar o nome correto.
         "Nome": [
-            # Prioridade 1: Padrão preciso que usa o campo "11 -" como ponto de parada.
-            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s]+?)\s*(?=\s*11\s*-)',
-            # Prioridade 2: Fallback que usa qualquer campo numérico como ponto de parada.
-            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s]+?)\s*(?=\s*\d{1,2}\s*-)',
-            # Prioridade 3: Fallback mais genérico
-            r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*([A-ZÀ-Ú\s]{5,}[A-ZÀ-Ú])'
+            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s\.]{5,})\s*(?=\s*11\s*-)'
         ]
     }
 
-    # Itera e captura o primeiro resultado encontrado para cada campo
+    # Itera e captura
     for key, regex_list in patterns.items():
         for regex in regex_list:
             match = re.search(regex, cleaned_text, re.IGNORECASE)
             if match:
-                found_text = match.group(1).strip()
-                data[key] = re.sub(r'\s{2,}', ' ', found_text)
+                # Limpa espaços internos e externos do valor encontrado
+                found_text = re.sub(r'\s+', ' ', match.group(1)).strip()
+                data[key] = found_text
                 break 
 
-    # Pós-processamento para o Nome ainda é útil como uma segunda camada de segurança
-    if data["Nome"] != "Não encontrado":
-        # Remove qualquer coisa que se pareça com o início de um novo campo (ex: "11 - ...")
-        data["Nome"] = re.sub(r'\s*\d{1,2}\s*-\s*.*$', '', data["Nome"]).strip()
+    # Correção final para o número da guia, caso tenha sido capturado com espaços
+    if data["Número GUIA"] != "Não encontrado":
+        data["Número GUIA"] = re.sub(r'\s', '', data["Número GUIA"])
 
     return data
 
 
 # ==============================================================================
-# 4️⃣ Geração de Excel e Interface (Sem tags HTML)
+# 4️⃣ Geração de Excel e Interface (Sem alterações)
 # ==============================================================================
 
 def to_excel(df_to_export):
