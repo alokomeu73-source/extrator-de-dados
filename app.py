@@ -1,7 +1,7 @@
-# app.py (VERSÃO CORRIGIDA)
+# app.py (VERSÃO FINALMENTE CORRIGIDA)
 
 # ==============================================================================
-# 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES (Ajuste no tratamento de erro Tesseract)
+# 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
 # ==============================================================================
 import streamlit as st
 import pandas as pd
@@ -30,7 +30,7 @@ except pytesseract.TesseractNotFoundError:
     )
 
 # ==============================================================================
-# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR (COM MELHORIAS E AJUSTE PARA IO.BytesIO)
+# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR
 # ==============================================================================
 
 def preprocess_image(image):
@@ -55,7 +55,7 @@ def extract_text_from_image(file_object):
         text = pytesseract.image_to_string(processed_image, lang='por', config=custom_config)
         return text
     except Exception as e:
-        # 'file_object' pode ser io.BytesIO.name se você configurou, senão use str(e)
+        # Se 'file_object' for io.BytesIO, o nome pode não ser útil, usamos a exceção.
         st.error(f"Erro ao processar a imagem: {e}") 
         return ""
 
@@ -70,7 +70,6 @@ def extract_text_from_pdf(pdf_file):
 
         # Se o PDF não tiver texto legível, trate-o como totalmente escaneado
         if not has_readable_text:
-            # Não use st.info aqui dentro do st.status, use st.write
             st.write(f"Arquivo parece ser totalmente escaneado. Ativando OCR em todas as páginas.")
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
@@ -91,7 +90,7 @@ def extract_text_from_pdf(pdf_file):
 
 
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX REFINADO) - Sem alterações
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX REFINADO)
 # ==============================================================================
 def extract_medical_data(text):
     """Usa expressões regulares mais flexíveis e robustas."""
@@ -134,7 +133,7 @@ def extract_medical_data(text):
 
 
 # ==============================================================================
-# 4️⃣ Geração de Excel e Interface (COM CORREÇÃO DO FLUXO DO ARQUIVO)
+# 4️⃣ Geração de Excel e Interface (COM CORREÇÃO DO FLUXO DO ARQUIVO E ESTADO)
 # ==============================================================================
 
 def to_excel(df_to_export):
@@ -197,11 +196,10 @@ if uploaded_files:
         progress_bar.progress((i + 1) / len(uploaded_files), text=f"Processando: {file_name}")
 
         try:
-            # *** CORREÇÃO: CRIAÇÃO DE UM OBJETO IO.BytesIO SEGURO ***
             # Garante que o ponteiro do arquivo esteja no início e cria uma cópia em memória
             uploaded_file.seek(0)
             file_io = io.BytesIO(uploaded_file.read())
-            file_io.name = file_name # Mantém o nome para fins de log
+            file_io.name = file_name
             
             with st.status(f"Analisando '{file_name}'...", expanded=False) as status:
                 file_extension = os.path.splitext(file_name)[1].lower()
@@ -209,19 +207,18 @@ if uploaded_files:
                 
                 if file_extension == ".pdf":
                     st.write("Lendo arquivo PDF...")
-                    # Passa o objeto io.BytesIO, não o uploaded_file original
                     text = extract_text_from_pdf(file_io) 
                 elif file_extension in [".png", ".jpg", ".jpeg"]:
                     st.write("Lendo arquivo de imagem...")
-                    # Passa o objeto io.BytesIO, não o uploaded_file original
                     text = extract_text_from_image(file_io) 
                 
                 st.write("Extraindo dados do texto...")
                 extracted_data = extract_medical_data(text)
                 
-                # ATUALIZAÇÃO DO STATUS: Esta é a parte que falhava
+                # --- CORREÇÃO DO BUG 'Unknown state (warning)' ---
                 if all(v == "Não encontrado" for v in extracted_data.values()):
-                    status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="warning", expanded=False)
+                    # Substituímos 'warning' por 'error' (estado válido mais próximo)
+                    status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True) 
                 else:
                     status.update(label=f"Extração concluída para '{file_name}'!", state="complete", expanded=False)
 
@@ -232,14 +229,13 @@ if uploaded_files:
                     st.expander(f"📝 Texto bruto extraído de '{file_name}'").text_area("", text, height=250)
         
         except Exception as e:
-            # Trata qualquer exceção que possa ter encerrado o contexto
+            # Trata erros críticos, exibindo-os fora do bloco 'status'
             st.error(f"Erro crítico ao processar '{file_name}'. Tente novamente ou use outro arquivo. Detalhe: {e}")
             
     
     progress_bar.empty()
 
     if all_data:
-        # Garante que o DataFrame seja sempre criado, mesmo que com erros parciais
         df = pd.DataFrame(all_data)[["Arquivo", "Número GUIA", "Registro ANS", "Data de Autorização", "Nome"]]
         st.session_state.processed_data = df
 
