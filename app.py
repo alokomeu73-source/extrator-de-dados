@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINAL E COMPLETA - V6, Correção Definitiva)
+# app.py (VERSÃO 7 - REESTRUTURADO COM LÓGICA ESPACIAL)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
@@ -13,12 +13,14 @@ import io
 import os
 from datetime import datetime
 
+# Configuração da página do Streamlit
 st.set_page_config(
     page_title="Extrator de Guias Médicas",
     page_icon="🩺",
     layout="wide"
 )
 
+# Verifica se o Tesseract está instalado
 try:
     pytesseract.get_tesseract_version()
 except pytesseract.TesseractNotFoundError:
@@ -29,122 +31,131 @@ except pytesseract.TesseractNotFoundError:
     )
 
 # ==============================================================================
-# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR (Otimizadas para Guia)
+# 2️⃣ FUNÇÕES DE OCR E PROCESSAMENTO DE IMAGEM (ESTRUTURADO)
 # ==============================================================================
 
 def preprocess_image(image):
-    """Aplica um pré-processamento robusto (contraste alto e nitidez)."""
-    img = image.convert('L')
+    """Aplica pré-processamento para melhorar a qualidade do OCR."""
+    img = image.convert('L')  # Converte para escala de cinza
     enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(3.0)
-    img = img.filter(ImageFilter.SHARPEN)
-    img = img.point(lambda x: 0 if x < 150 else 255, '1')
+    img = enhancer.enhance(2.0) # Aumenta o contraste
+    img = img.filter(ImageFilter.SHARPEN) # Aplica nitidez
     return img
 
-def extract_text_from_image(file_object):
-    """Extrai texto de uma imagem usando Tesseract com PSM 3."""
+def extract_structured_data_from_image(file_object):
+    """
+    Extrai texto e suas coordenadas de uma imagem usando Tesseract.
+    Retorna um DataFrame do Pandas com dados estruturados.
+    """
     try:
         image = Image.open(file_object)
         processed_image = preprocess_image(image)
-        custom_config = r'--psm 3'
-        text = pytesseract.image_to_string(processed_image, lang='por', config=custom_config)
-        return text
+        # Usa image_to_data para obter texto, coordenadas e confiança
+        ocr_df = pytesseract.image_to_data(
+            processed_image, 
+            lang='por', 
+            output_type=pytesseract.Output.DATAFRAME
+        )
+        # Filtra palavras vazias ou com baixa confiança
+        ocr_df.dropna(subset=['text'], inplace=True)
+        ocr_df = ocr_df[ocr_df['conf'] > 30]
+        ocr_df['text'] = ocr_df['text'].str.strip()
+        ocr_df = ocr_df[ocr_df['text'] != '']
+        return ocr_df
     except Exception as e:
-        st.error(f"Erro ao processar a imagem: {e}")
-        return ""
+        st.error(f"Erro ao processar a imagem com Tesseract: {e}")
+        return pd.DataFrame()
 
-def extract_text_from_pdf(pdf_file):
-    """Extrai texto de PDF, com lógica de OCR aprimorada."""
+# ==============================================================================
+# 3️⃣ NOVA LÓGICA DE EXTRAÇÃO BASEADA EM COORDENADAS
+# ==============================================================================
+
+def find_value_near_label(ocr_df, label_pattern, max_distance_x=500):
+    """
+    Encontra o valor à direita de um rótulo com base em sua posição.
+
+    Args:
+        ocr_df (pd.DataFrame): DataFrame com os dados do Tesseract.
+        label_pattern (str): Padrão RegEx para encontrar o rótulo.
+        max_distance_x (int): A distância máxima (em pixels) para procurar à direita.
+
+    Returns:
+        str: O valor encontrado ou "Não encontrado".
+    """
     try:
-        pdf_file.seek(0)
-        pdf_bytes = pdf_file.read()
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        full_text = ""
-        has_readable_text = any(page.get_text().strip() for page in doc)
+        # Encontra a(s) parte(s) do rótulo
+        label_rows = ocr_df[ocr_df['text'].str.contains(label_pattern, na=False, flags=re.IGNORECASE)]
+        if label_rows.empty:
+            return "Não encontrado"
 
-        if not has_readable_text:
-            st.write(f"Arquivo parece ser totalmente escaneado. Ativando OCR em todas as páginas.")
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                pix = page.get_pixmap(dpi=300)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                processed_image = preprocess_image(img)
-                custom_config = r'--psm 3'
-                full_text += pytesseract.image_to_string(processed_image, lang='por', config=custom_config) + "\n\n"
-        else:
-            for page in doc:
-                full_text += page.get_text() + "\n\n"
+        # Pega as coordenadas da primeira ocorrência do rótulo
+        label_row = label_rows.iloc[0]
+        label_x = label_row['left'] + label_row['width']
+        label_y_center = label_row['top'] + label_row['height'] / 2
 
-        doc.close()
-        return full_text
-    except Exception as e:
-        st.error(f"Erro ao processar o PDF: {e}")
-        return ""
+        # Define a área de busca para o valor (mesma linha, à direita)
+        search_top = label_y_center - label_row['height']
+        search_bottom = label_y_center + label_row['height']
+        search_left = label_x
+        search_right = label_x + max_distance_x
 
-
-# ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX CORRIGIDO E ULTRA-ESPECÍFICO)
-# ==============================================================================
-def extract_medical_data(text):
-    """Usa expressões regulares específicas e pré-limpeza para a Guia SP/SADT."""
-    data = {
-        "Número GUIA": "Não encontrado",
-        "Registro ANS": "Não encontrado",
-        "Data de Autorização": "Não encontrado",
-        "Nome": "Não encontrado",
-    }
-
-    # Etapa 1: Pré-limpeza crucial
-    cleaned_text = re.sub(r'[\n\r]+', ' ', text)
-    cleaned_text = re.sub(r'[\*\[\]\|]', ' ', cleaned_text)
-    
-    # Etapa 2: REMOÇÃO ESTRATÉGICA DO CAMPO CONFUSO "NOME SOCIAL" (A CHAVE DA CORREÇÃO)
-    cleaned_text = re.sub(r'\d{1,2}\s*-\s*Nome\s*Social', 'CAMPO_NOME_SOCIAL_REMOVIDO', cleaned_text, flags=re.IGNORECASE)
-
-    # Etapa 3: Normalizar espaços múltiplos que podem ter sido criados
-    cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text)
-
-    # --- Padrões de Regex Otimizados para o Layout Específico da Guia ---
-    patterns = {
-        # 1. Número GUIA (Alvo: "2 - Número Guia")
-        # Procura por "2 - Número Guia" e captura os dígitos que vêm depois.
-        # [0-9\s]+ permite que o OCR leia o número com espaços (ex: 1745 6856)
-        "Número GUIA": [
-            r'2\s*-\s*N[úu]mero\s*Guia\s*([0-9\s]+)\b'
-        ],
-        
-        # 2. Registro ANS (Alvo: "1 - Registro ANS", já estava funcionando bem)
-        "Registro ANS": [
-            r'(?:1\s*-\s*)?Registro\s*ANS\s*.*?(\d{6})\b'
-        ],
-
-        # 3. Data de Autorização (Alvo: "3 - Data de Autorização", já funcionando)
-        "Data de Autorização": [
-            r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})'
-        ],
-
-        # 4. Nome do Beneficiário (Alvo: "10 - Nome")
-        # Como removemos "Nome Social", este padrão agora só pode encontrar o nome correto.
-        "Nome": [
-            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s\.]{5,})\s*(?=\s*11\s*-)'
+        # Filtra as palavras candidatas que estão na área de busca
+        value_df = ocr_df[
+            (ocr_df['top'] >= search_top) &
+            (ocr_df['top'] <= search_bottom) &
+            (ocr_df['left'] >= search_left) &
+            (ocr_df['left'] <= search_right)
         ]
+
+        if value_df.empty:
+            return "Não encontrado"
+        
+        # Ordena as palavras por sua posição horizontal e junta o texto
+        value_df = value_df.sort_values(by='left')
+        found_value = ' '.join(value_df['text'].astype(str))
+        
+        return found_value.strip()
+        
+    except Exception:
+        return "Não encontrado"
+
+def extract_medical_data_from_structure(ocr_df):
+    """Função principal que orquestra a extração usando a lógica espacial."""
+    if ocr_df.empty:
+        return {
+            "Número GUIA": "OCR falhou", "Registro ANS": "OCR falhou",
+            "Data de Autorização": "OCR falhou", "Nome": "OCR falhou"
+        }
+    
+    data = {}
+    
+    # --- Definição dos Rótulos e Busca ---
+    
+    # 1. Número GUIA (Rótulo: "2 - Número Guia")
+    data["Número GUIA"] = find_value_near_label(ocr_df, r'\b2\s*-\s*N[úu]mero\s*Guia\b', max_distance_x=200)
+
+    # 2. Registro ANS (Rótulo: "1 - Registro ANS")
+    data["Registro ANS"] = find_value_near_label(ocr_df, r'Registro\s*ANS', max_distance_x=200)
+
+    # 3. Data de Autorização (Rótulo: "3 - Data de Autorização")
+    data["Data de Autorização"] = find_value_near_label(ocr_df, r'Autoriza[çc][ãa]o', max_distance_x=250)
+    # Limpeza para pegar apenas o padrão de data
+    date_match = re.search(r'(\d{2}/\d{2}/\d{4})', data["Data de Autorização"])
+    if date_match:
+        data["Data de Autorização"] = date_match.group(1)
+
+    # 4. Nome do Beneficiário (Rótulo: "10 - Nome")
+    data["Nome"] = find_value_near_label(ocr_df, r'\b10\s*-\s*Nome\b', max_distance_x=600)
+
+    # Garante que todos os campos existam no dicionário final
+    final_data = {
+        "Número GUIA": data.get("Número GUIA", "Não encontrado"),
+        "Registro ANS": data.get("Registro ANS", "Não encontrado"),
+        "Data de Autorização": data.get("Data de Autorização", "Não encontrado"),
+        "Nome": data.get("Nome", "Não encontrado"),
     }
 
-    # Itera e captura
-    for key, regex_list in patterns.items():
-        for regex in regex_list:
-            match = re.search(regex, cleaned_text, re.IGNORECASE)
-            if match:
-                # Limpa espaços internos e externos do valor encontrado
-                found_text = re.sub(r'\s+', ' ', match.group(1)).strip()
-                data[key] = found_text
-                break 
-
-    # Correção final para o número da guia, caso tenha sido capturado com espaços
-    if data["Número GUIA"] != "Não encontrado":
-        data["Número GUIA"] = re.sub(r'\s', '', data["Número GUIA"])
-
-    return data
+    return final_data
 
 
 # ==============================================================================
@@ -174,8 +185,8 @@ def to_excel(df_to_export):
 
     return output.getvalue()
 
-st.title("🩺 Extrator de Informações de Guias Médicas")
-st.markdown("Faça o upload de guias em formato PDF ou imagem. O sistema usará OCR para extrair os dados e apresentá-los em uma tabela editável.")
+st.title("🩺 Extrator de Informações de Guias Médicas (V7)")
+st.markdown("Faça o upload de guias em formato PDF ou imagem. O sistema usará OCR e **lógica espacial** para extrair os dados com alta precisão.")
 
 with st.sidebar:
     st.header("📤 Upload de Arquivos")
@@ -185,7 +196,7 @@ with st.sidebar:
         accept_multiple_files=True
     )
     st.header("🛠️ Opções")
-    show_debug_text = st.checkbox("Mostrar texto extraído (debug)")
+    show_debug_text = st.checkbox("Mostrar dados brutos do OCR (debug)")
 
     st.divider()
 
@@ -213,23 +224,19 @@ if uploaded_files:
         try:
             uploaded_file.seek(0)
             file_io = io.BytesIO(uploaded_file.read())
-            file_io.name = file_name
 
-            with st.status(f"Analisando '{file_name}'...", expanded=False) as status:
-                file_extension = os.path.splitext(file_name)[1].lower()
-                text = ""
+            with st.status(f"Analisando '{file_name}'...", expanded=True) as status:
+                st.write("Extraindo texto e coordenadas do arquivo...")
+                # A extração agora retorna um DataFrame estruturado
+                ocr_dataframe = extract_structured_data_from_image(file_io)
 
-                if file_extension == ".pdf":
-                    st.write("Lendo arquivo PDF...")
-                    text = extract_text_from_pdf(file_io)
-                elif file_extension in [".png", ".jpg", ".jpeg"]:
-                    st.write("Lendo arquivo de imagem...")
-                    text = extract_text_from_image(file_io)
+                if show_debug_text:
+                    st.expander(f"🔬 Dados brutos do OCR de '{file_name}'").dataframe(ocr_dataframe)
 
-                st.write("Extraindo dados do texto...")
-                extracted_data = extract_medical_data(text)
+                st.write("Aplicando lógica espacial para encontrar os dados...")
+                extracted_data = extract_medical_data_from_structure(ocr_dataframe)
 
-                if all(v == "Não encontrado" for v in extracted_data.values()):
+                if all(v == "Não encontrado" or v == "OCR falhou" for v in extracted_data.values()):
                     status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True)
                 else:
                     status.update(label=f"Extração concluída para '{file_name}'!", state="complete", expanded=False)
@@ -237,12 +244,8 @@ if uploaded_files:
                 extracted_data["Arquivo"] = file_name
                 all_data.append(extracted_data)
 
-                if show_debug_text:
-                    st.expander(f"📝 Texto bruto extraído de '{file_name}'").text_area("", text, height=250)
-
         except Exception as e:
             st.error(f"Erro crítico ao processar '{file_name}'. Detalhe: {e}")
-
 
     progress_bar.empty()
 
@@ -252,7 +255,6 @@ if uploaded_files:
 
 if not st.session_state.processed_data.empty:
     st.header("📋 Resultados Editáveis")
-
     edited_df = st.data_editor(
         st.session_state.processed_data,
         num_rows="dynamic",
@@ -262,13 +264,11 @@ if not st.session_state.processed_data.empty:
 
     st.header("⬇️ Download")
     col1, col2, _ = st.columns([1, 1, 3])
-
     with col1:
         excel_data = to_excel(edited_df)
         timestamp = datetime.now().strftime("%Y%m%d")
         st.download_button(
-            label="📥 Baixar Excel",
-            data=excel_data,
+            label="📥 Baixar Excel", data=excel_data,
             file_name=f"guias_medicas_{timestamp}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
@@ -276,8 +276,7 @@ if not st.session_state.processed_data.empty:
     with col2:
         csv_data = edited_df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📄 Baixar CSV",
-            data=csv_data,
+            label="📄 Baixar CSV", data=csv_data,
             file_name=f"guias_medicas_{timestamp}.csv",
             mime="text/csv",
             use_container_width=True
