@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINAL E COMPLETA - V4, Otimizada)
+# app.py (VERSÃO FINAL E COMPLETA - V5, Refinada com Imagem de Referência)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
@@ -83,7 +83,7 @@ def extract_text_from_pdf(pdf_file):
 
 
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX OTIMIZADO E PRECISO)
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX REFINADO COM IMAGEM REAL)
 # ==============================================================================
 def extract_medical_data(text):
     """Usa expressões regulares específicas e pré-limpeza para a Guia SP/SADT."""
@@ -101,32 +101,33 @@ def extract_medical_data(text):
 
     # --- Padrões de Regex Otimizados e Resilientes ---
     patterns = {
-        # 1. Registro ANS (Flexível para ruídos entre o rótulo e o número)
+        # 1. Número GUIA (Alvo: "2 - Número Guia")
+        "Número GUIA": [
+            # Prioridade 1: Padrão exato para a guia fornecida.
+            r'\d+\s*-\s*N[úu]mero\s*Guia\s*(\d+)\b',
+            # Fallbacks para outros layouts
+            r'N[ºo°\.\s-]*\s*Guia\s*Principal\s*[:\s]*(\d{6,10})\b',
+            r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})',
+            r'Guia\s*Atribuído\s*pela\s*Operadora\s*(\d{20})',
+        ],
+        
+        # 2. Registro ANS (Alvo: "1 - Registro ANS")
         "Registro ANS": [
             r'(?:Registro\s*ANS|ANS)\s*.*?(\d{6}\b)'
         ],
 
-        # 2. Número GUIA (Flexível para variações de "Nº")
-        "Número GUIA": [
-            # Prioridade 1: Padrão mais robusto para "Nº Guia Principal"
-            r'N[ºo°\.\s-]*\s*Guia\s*Principal\s*[:\s]*(\d{6,10})\b',
-            # Prioridade 2: Padrão original como fallback
-            r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})',
-            # Prioridade 3: Fallback para o número longo da operadora
-            r'Guia\s*Atribuído\s*pela\s*Operadora\s*(\d{20})',
-        ],
-
-        # 3. Data de Autorização (Já estava bom, mantido)
+        # 3. Data de Autorização (Alvo: "3 - Data de Autorização")
         "Data de Autorização": [
             r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})'
         ],
 
-        # 4. Nome do Beneficiário (Usa captura não-gananciosa e lookahead para precisão)
+        # 4. Nome do Beneficiário (Alvo: "10 - Nome")
         "Nome": [
-            # Prioridade 1: Padrão mais preciso usando o campo "10 - Nome" como âncora e
-            # o próximo campo (ex: "11 -") como ponto de parada.
-            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s]+?)\s*(?=\d{1,2}\s*-)',
-            # Prioridade 2: Fallback mais genérico
+            # Prioridade 1: Padrão preciso que usa o campo "11 -" como ponto de parada.
+            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s]+?)\s*(?=\s*11\s*-)',
+            # Prioridade 2: Fallback que usa qualquer campo numérico como ponto de parada.
+            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s]+?)\s*(?=\s*\d{1,2}\s*-)',
+            # Prioridade 3: Fallback mais genérico
             r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*([A-ZÀ-Ú\s]{5,}[A-ZÀ-Ú])'
         ]
     }
@@ -137,12 +138,10 @@ def extract_medical_data(text):
             match = re.search(regex, cleaned_text, re.IGNORECASE)
             if match:
                 found_text = match.group(1).strip()
-                # Limpeza final de espaços múltiplos que possam ter sido capturados
                 data[key] = re.sub(r'\s{2,}', ' ', found_text)
-                break # Para no primeiro padrão bem-sucedido para este campo
+                break 
 
-    # O Pós-processamento para o Nome ainda é útil como uma segunda camada de segurança,
-    # caso o regex de fallback seja acionado.
+    # Pós-processamento para o Nome ainda é útil como uma segunda camada de segurança
     if data["Nome"] != "Não encontrado":
         # Remove qualquer coisa que se pareça com o início de um novo campo (ex: "11 - ...")
         data["Nome"] = re.sub(r'\s*\d{1,2}\s*-\s*.*$', '', data["Nome"]).strip()
@@ -214,7 +213,6 @@ if uploaded_files:
         progress_bar.progress((i + 1) / len(uploaded_files), text=f"Processando: {file_name}")
 
         try:
-            # Cria um objeto io.BytesIO seguro
             uploaded_file.seek(0)
             file_io = io.BytesIO(uploaded_file.read())
             file_io.name = file_name
@@ -233,7 +231,6 @@ if uploaded_files:
                 st.write("Extraindo dados do texto...")
                 extracted_data = extract_medical_data(text)
 
-                # CORREÇÃO DO BUG: 'warning' substituído por 'error'
                 if all(v == "Não encontrado" for v in extracted_data.values()):
                     status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True)
                 else:
@@ -246,7 +243,6 @@ if uploaded_files:
                     st.expander(f"📝 Texto bruto extraído de '{file_name}'").text_area("", text, height=250)
 
         except Exception as e:
-            # Trata erros críticos
             st.error(f"Erro crítico ao processar '{file_name}'. Detalhe: {e}")
 
 
