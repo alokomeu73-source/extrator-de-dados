@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINAL OTIMIZADA PARA GUIAS SP/SADT)
+# app.py (VERSÃO FINAL E COMPLETA - BUG STREAMLIT E OCR/REGEX RESOLVIDOS)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
@@ -36,7 +36,6 @@ except pytesseract.TesseractNotFoundError:
 def preprocess_image(image):
     """
     Aplica um pré-processamento mais robusto para melhorar a qualidade do OCR.
-    - Contraste mais alto e nitidez.
     """
     img = image.convert('L')
     
@@ -115,26 +114,26 @@ def extract_medical_data(text):
     patterns = {
         # 1. Número GUIA
         "Número GUIA": [
+            # Captura a Guia Principal (o que você quer: 17456856)
+            r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})', 
             # Captura o número da guia principal de 20 dígitos (Atribuído pela Operadora)
             r'(?:Nº\s*Guia\s*Atribuído\s*pela\s*Operadora|Guia\s*Atribuído\s*pela\s*Operadora)\s*(\d{20})',
-            # Captura a Guia Principal (6 a 10 dígitos)
-            r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})',
             # Caso o OCR erre o rótulo, procura por um número solto de 20 dígitos
             r'(\b\d{20}\b)'
         ],
         
-        # 2. Registro ANS (sempre 6 dígitos)
+        # 2. Registro ANS (419010)
         "Registro ANS": [
             r'(?:Registro\s*ANS)\s*(\d{6}\b)'
         ],
         
-        # 3. Data de Autorização (DD/MM/AAAA)
+        # 3. Data de Autorização
         "Data de Autorização": [
             # Procura o rótulo e captura a data, ignorando o lixo de caracteres entre
             r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})'
         ],
         
-        # 4. Nome do Beneficiário (apenas letras maiúsculas para evitar lixo)
+        # 4. Nome do Beneficiário (MATHEUS PEREIRA BOIKO)
         "Nome": [
             # Procura pelo rótulo 'Nome' e captura a sequência de 5+ caracteres que são MAIÚSCULAS/espaços
             r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*([A-ZÀ-Ú\s]{5,})'
@@ -150,16 +149,15 @@ def extract_medical_data(text):
                 data[key] = re.sub(r'\s{2,}', ' ', found_text)
                 break 
 
-    # Correção de Pós-processamento para o Nome
+    # Correção de Pós-processamento para o Nome: remove lixo do próximo campo (ex: "11 - Número...")
     if data["Nome"] != "Não encontrado":
-        # Remove lixo do próximo campo que pode ter sido capturado (ex: "MATHEUS BOIKO 11 - Número...")
         data["Nome"] = re.sub(r'\s*\d{1,2}\s*-\s*[A-ZÀ-Ú\s]+$', '', data["Nome"]).strip()
 
     return data
 
 
 # ==============================================================================
-# 4️⃣ Geração de Excel e Interface
+# 4️⃣ Geração de Excel e Interface (COM A CORREÇÃO DO BUG)
 # ==============================================================================
 
 def to_excel(df_to_export):
@@ -241,7 +239,7 @@ if uploaded_files:
                 st.write("Extraindo dados do texto...")
                 extracted_data = extract_medical_data(text)
                 
-                # CORREÇÃO DO ESTADO ('warning' para 'error')
+                # *** CORREÇÃO DO BUG AQUI: 'warning' substituído por 'error' ***
                 if all(v == "Não encontrado" for v in extracted_data.values()):
                     status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True) 
                 else:
