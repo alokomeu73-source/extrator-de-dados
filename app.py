@@ -1,11 +1,11 @@
-# app.py (VERSÃO FINAL E COMPLETA - BUG STREAMLIT E OCR/REGEX RESOLVIDOS)
+# app.py (VERSÃO FINAL E COMPLETA - V3)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
 # ==============================================================================
 import streamlit as st
 import pandas as pd
-import fitz  # PyMuPDF
+import fitz
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 import re
@@ -19,7 +19,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Verifica a instalação do Tesseract e exibe erro, mas não para o app
 try:
     pytesseract.get_tesseract_version()
 except pytesseract.TesseractNotFoundError:
@@ -30,33 +29,23 @@ except pytesseract.TesseractNotFoundError:
     )
 
 # ==============================================================================
-# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR (Otimizadas para Guia)
+# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR
 # ==============================================================================
 
 def preprocess_image(image):
-    """
-    Aplica um pré-processamento mais robusto para melhorar a qualidade do OCR.
-    """
+    """Aplica um pré-processamento robusto (contraste alto e nitidez)."""
     img = image.convert('L')
-    
-    # 1. Aumentar o contraste
     enhancer = ImageEnhance.Contrast(img)
     img = enhancer.enhance(3.0) 
-    
-    # 2. Aplicar nitidez
     img = img.filter(ImageFilter.SHARPEN)
-    
-    # 3. Binarização
     img = img.point(lambda x: 0 if x < 150 else 255, '1')
-    
     return img
 
 def extract_text_from_image(file_object):
-    """Extrai texto de uma imagem usando Tesseract com configuração otimizada."""
+    """Extrai texto de uma imagem usando Tesseract com PSM 3."""
     try:
         image = Image.open(file_object)
         processed_image = preprocess_image(image)
-        # Configuração do Tesseract: PSM 3 (totalmente automático)
         custom_config = r'--psm 3'
         text = pytesseract.image_to_string(processed_image, lang='por', config=custom_config)
         return text
@@ -65,7 +54,7 @@ def extract_text_from_image(file_object):
         return ""
 
 def extract_text_from_pdf(pdf_file):
-    """Extrai texto de PDF, com lógica de OCR aprimorada para páginas escaneadas."""
+    """Extrai texto de PDF, com lógica de OCR aprimorada."""
     try:
         pdf_file.seek(0)
         pdf_bytes = pdf_file.read()
@@ -80,7 +69,6 @@ def extract_text_from_pdf(pdf_file):
                 pix = page.get_pixmap(dpi=300) 
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 processed_image = preprocess_image(img)
-                
                 custom_config = r'--psm 3' 
                 full_text += pytesseract.image_to_string(processed_image, lang='por', config=custom_config) + "\n\n"
         else:
@@ -95,7 +83,7 @@ def extract_text_from_pdf(pdf_file):
 
 
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX OTIMIZADO PARA GUIAS)
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX FINAL E PRECISO)
 # ==============================================================================
 def extract_medical_data(text):
     """Usa expressões regulares específicas e pré-limpeza para a Guia SP/SADT."""
@@ -109,33 +97,33 @@ def extract_medical_data(text):
     # Pré-limpeza crucial: Remove quebras de linha duplas e ruídos de tabela
     cleaned_text = re.sub(r'[\n\r]+', ' ', text)
     cleaned_text = re.sub(r'[\*\[\]]', '', cleaned_text)
+    # Remove as barras verticais para facilitar o RegEx (| é ruído da tabela)
+    cleaned_text = re.sub(r'\|', ' ', cleaned_text) 
 
     # --- Padrões de Regex Otimizados ---
     patterns = {
-        # 1. Número GUIA
+        # 1. Número GUIA (Foca no Número da Guia Principal 17456856)
         "Número GUIA": [
-            # Captura a Guia Principal (o que você quer: 17456856)
             r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})', 
-            # Captura o número da guia principal de 20 dígitos (Atribuído pela Operadora)
-            r'(?:Nº\s*Guia\s*Atribuído\s*pela\s*Operadora|Guia\s*Atribuído\s*pela\s*Operadora)\s*(\d{20})',
-            # Caso o OCR erre o rótulo, procura por um número solto de 20 dígitos
-            r'(\b\d{20}\b)'
+            # Alternativa: número longo
+            r'Guia\s*Atribuído\s*pela\s*Operadora\s*(\d{20})',
         ],
         
-        # 2. Registro ANS (419010)
+        # 2. Registro ANS (Permite texto antes de ANS para pegar "PE ANS 419010")
         "Registro ANS": [
+            r'[A-ZÀ-Ú\s]{1,5}\s*ANS\s*(\d{6}\b)', # Ex: PE ANS 419010
             r'(?:Registro\s*ANS)\s*(\d{6}\b)'
         ],
         
         # 3. Data de Autorização
         "Data de Autorização": [
-            # Procura o rótulo e captura a data, ignorando o lixo de caracteres entre
             r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})'
         ],
         
         # 4. Nome do Beneficiário (MATHEUS PEREIRA BOIKO)
         "Nome": [
-            # Procura pelo rótulo 'Nome' e captura a sequência de 5+ caracteres que são MAIÚSCULAS/espaços
+            # Captura a sequência de MAIÚSCULAS após o rótulo "Nome" ou "10- Nome"
+            r'\d{1,2}\s*-\s*Nome\s*([A-ZÀ-Ú\s]{5,})',
             r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*([A-ZÀ-Ú\s]{5,})'
         ]
     }
@@ -151,8 +139,10 @@ def extract_medical_data(text):
 
     # Correção de Pós-processamento para o Nome: remove lixo do próximo campo (ex: "11 - Número...")
     if data["Nome"] != "Não encontrado":
-        data["Nome"] = re.sub(r'\s*\d{1,2}\s*-\s*[A-ZÀ-Ú\s]+$', '', data["Nome"]).strip()
-
+        # Remove a parte que se parece com o início do próximo rótulo (número seguido de -)
+        data["Nome"] = re.sub(r'\s*\d{1,2}\s*-\s*.*$', '', data["Nome"]).strip()
+        data["Nome"] = re.sub(r'\s*H\s*-\s*.*$', '', data["Nome"]).strip() # Lida com o erro H - Número
+        
     return data
 
 
