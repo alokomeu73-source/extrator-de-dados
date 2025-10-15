@@ -1,11 +1,11 @@
-# app.py (VERSÃO FINAL E COMPLETA - V3)
+# app.py (VERSÃO FINAL E COMPLETA - V4)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
 # ==============================================================================
 import streamlit as st
 import pandas as pd
-import fitz
+import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 import re
@@ -29,7 +29,7 @@ except pytesseract.TesseractNotFoundError:
     )
 
 # ==============================================================================
-# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR
+# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR (Otimizadas para Guia)
 # ==============================================================================
 
 def preprocess_image(image):
@@ -97,34 +97,36 @@ def extract_medical_data(text):
     # Pré-limpeza crucial: Remove quebras de linha duplas e ruídos de tabela
     cleaned_text = re.sub(r'[\n\r]+', ' ', text)
     cleaned_text = re.sub(r'[\*\[\]]', '', cleaned_text)
-    # Remove as barras verticais para facilitar o RegEx (| é ruído da tabela)
     cleaned_text = re.sub(r'\|', ' ', cleaned_text) 
+    
+    # 🚨 NOVO TRUQUE: Remove a seção "Nome Social" inteira para evitar confusão.
+    cleaned_text = re.sub(r'89\s*-\s*Nome\s*Social.*?\d{1,2}\s*-\s*', ' ', cleaned_text, flags=re.IGNORECASE)
 
     # --- Padrões de Regex Otimizados ---
     patterns = {
         # 1. Número GUIA (Foca no Número da Guia Principal 17456856)
         "Número GUIA": [
             r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})', 
-            # Alternativa: número longo
+            # Alternativa: número longo (o que foi capturado antes)
             r'Guia\s*Atribuído\s*pela\s*Operadora\s*(\d{20})',
         ],
         
-        # 2. Registro ANS (Permite texto antes de ANS para pegar "PE ANS 419010")
+        # 2. Registro ANS (419010) - Simplificado para apenas 6 dígitos após ANS
         "Registro ANS": [
-            r'[A-ZÀ-Ú\s]{1,5}\s*ANS\s*(\d{6}\b)', # Ex: PE ANS 419010
+            r'ANS\s*(\d{6}\b)', 
             r'(?:Registro\s*ANS)\s*(\d{6}\b)'
         ],
         
-        # 3. Data de Autorização
+        # 3. Data de Autorização (DD/MM/AAAA)
         "Data de Autorização": [
             r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})'
         ],
         
         # 4. Nome do Beneficiário (MATHEUS PEREIRA BOIKO)
         "Nome": [
-            # Captura a sequência de MAIÚSCULAS após o rótulo "Nome" ou "10- Nome"
-            r'\d{1,2}\s*-\s*Nome\s*([A-ZÀ-Ú\s]{5,})',
-            r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*([A-ZÀ-Ú\s]{5,})'
+            # Captura a sequência de MAIÚSCULAS após o rótulo "10- Nome" ou "Nome"
+            r'\d{1,2}\s*-\s*Nome\s*([A-ZÀ-Ú\s]{5,}[A-ZÀ-Ú])',
+            r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*([A-ZÀ-Ú\s]{5,}[A-ZÀ-Ú])'
         ]
     }
 
@@ -137,11 +139,10 @@ def extract_medical_data(text):
                 data[key] = re.sub(r'\s{2,}', ' ', found_text)
                 break 
 
-    # Correção de Pós-processamento para o Nome: remove lixo do próximo campo (ex: "11 - Número...")
+    # Correção de Pós-processamento para o Nome: remove o lixo do próximo campo 
     if data["Nome"] != "Não encontrado":
-        # Remove a parte que se parece com o início do próximo rótulo (número seguido de -)
-        data["Nome"] = re.sub(r'\s*\d{1,2}\s*-\s*.*$', '', data["Nome"]).strip()
-        data["Nome"] = re.sub(r'\s*H\s*-\s*.*$', '', data["Nome"]).strip() # Lida com o erro H - Número
+        # Remove a parte que se parece com o início do próximo rótulo (número seguido de - ou a letra H)
+        data["Nome"] = re.sub(r'\s*(H|\d{1,2})\s*-\s*.*$', '', data["Nome"]).strip()
         
     return data
 
@@ -286,3 +287,4 @@ if not st.session_state.processed_data.empty:
         )
 else:
     st.info("Aguardando o upload de arquivos para iniciar o processamento.")
+```</details>
