@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINALMENTE CORRIGIDA)
+# app.py (VERSÃO CORRIGIDA PARA OCR)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 import fitz  # PyMuPDF
 import pytesseract
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter # Importado ImageFilter
 import re
 import io
 import os
@@ -30,39 +30,46 @@ except pytesseract.TesseractNotFoundError:
     )
 
 # ==============================================================================
-# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR
+# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR (COM MELHORIAS CRUCIAIS)
 # ==============================================================================
 
 def preprocess_image(image):
     """
     Aplica um pré-processamento mais robusto para melhorar a qualidade do OCR.
+    *** MELHORIAS APLICADAS: Contraste mais alto e filtro de nitidez ***
     """
     img = image.convert('L')
+    
+    # 1. Aumentar o contraste para 3.0 (mais agressivo)
     enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(2.0)
-    # Binarização: converte pixels cinzas para preto ou branco
-    img = img.point(lambda x: 0 if x < 180 else 255, '1')
+    img = enhancer.enhance(3.0) 
+    
+    # 2. Aplicar nitidez para melhorar a definição das letras
+    img = img.filter(ImageFilter.SHARPEN)
+    
+    # 3. Binarização: converter pixels cinzas para preto ou branco
+    img = img.point(lambda x: 0 if x < 150 else 255, '1')
+    
     return img
 
 def extract_text_from_image(file_object):
     """Extrai texto de uma imagem usando Tesseract com configuração otimizada."""
     try:
-        # Image.open() pode receber o objeto io.BytesIO
         image = Image.open(file_object)
         processed_image = preprocess_image(image)
         # Configuração do Tesseract:
-        custom_config = r'--psm 6'
+        # *** MUDANÇA: --psm 3 é mais flexível para layouts de formulário que --psm 6 ***
+        custom_config = r'--psm 3'
         text = pytesseract.image_to_string(processed_image, lang='por', config=custom_config)
         return text
     except Exception as e:
-        # Se 'file_object' for io.BytesIO, o nome pode não ser útil, usamos a exceção.
         st.error(f"Erro ao processar a imagem: {e}") 
         return ""
 
 def extract_text_from_pdf(pdf_file):
     """Extrai texto de PDF, com lógica de OCR aprimorada para páginas escaneadas."""
     try:
-        pdf_file.seek(0) # Volta ao início para leitura segura
+        pdf_file.seek(0)
         pdf_bytes = pdf_file.read()
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         full_text = ""
@@ -73,10 +80,13 @@ def extract_text_from_pdf(pdf_file):
             st.write(f"Arquivo parece ser totalmente escaneado. Ativando OCR em todas as páginas.")
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                pix = page.get_pixmap(dpi=300)
+                # Renderiza em alta DPI
+                pix = page.get_pixmap(dpi=300) 
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 processed_image = preprocess_image(img)
-                custom_config = r'--psm 6'
+                
+                # *** MUDANÇA: --psm 3 é mais flexível para layouts de formulário que --psm 6 ***
+                custom_config = r'--psm 3' 
                 full_text += pytesseract.image_to_string(processed_image, lang='por', config=custom_config) + "\n\n"
         else: # Extrai texto diretamente
             for page in doc:
@@ -90,7 +100,7 @@ def extract_text_from_pdf(pdf_file):
 
 
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX REFINADO)
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX REFINADO) - Sem alterações
 # ==============================================================================
 def extract_medical_data(text):
     """Usa expressões regulares mais flexíveis e robustas."""
@@ -133,7 +143,7 @@ def extract_medical_data(text):
 
 
 # ==============================================================================
-# 4️⃣ Geração de Excel e Interface (COM CORREÇÃO DO FLUXO DO ARQUIVO E ESTADO)
+# 4️⃣ Geração de Excel e Interface
 # ==============================================================================
 
 def to_excel(df_to_export):
@@ -196,7 +206,7 @@ if uploaded_files:
         progress_bar.progress((i + 1) / len(uploaded_files), text=f"Processando: {file_name}")
 
         try:
-            # Garante que o ponteiro do arquivo esteja no início e cria uma cópia em memória
+            # Cria um objeto io.BytesIO seguro para funções de leitura
             uploaded_file.seek(0)
             file_io = io.BytesIO(uploaded_file.read())
             file_io.name = file_name
@@ -215,9 +225,8 @@ if uploaded_files:
                 st.write("Extraindo dados do texto...")
                 extracted_data = extract_medical_data(text)
                 
-                # --- CORREÇÃO DO BUG 'Unknown state (warning)' ---
+                # CORREÇÃO DO ESTADO ('warning' para 'error')
                 if all(v == "Não encontrado" for v in extracted_data.values()):
-                    # Substituímos 'warning' por 'error' (estado válido mais próximo)
                     status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True) 
                 else:
                     status.update(label=f"Extração concluída para '{file_name}'!", state="complete", expanded=False)
@@ -229,8 +238,8 @@ if uploaded_files:
                     st.expander(f"📝 Texto bruto extraído de '{file_name}'").text_area("", text, height=250)
         
         except Exception as e:
-            # Trata erros críticos, exibindo-os fora do bloco 'status'
-            st.error(f"Erro crítico ao processar '{file_name}'. Tente novamente ou use outro arquivo. Detalhe: {e}")
+            # Trata erros críticos
+            st.error(f"Erro crítico ao processar '{file_name}'. Detalhe: {e}")
             
     
     progress_bar.empty()
