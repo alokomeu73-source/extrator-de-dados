@@ -1,7 +1,7 @@
-# app.py
+# app.py (VERSÃO REFINADA)
 
 # ==============================================================================
-# 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
+# 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES (sem alterações)
 # ==============================================================================
 import streamlit as st
 import pandas as pd
@@ -13,16 +13,12 @@ import io
 import os
 from datetime import datetime
 
-# --- Configuração da Página Streamlit ---
 st.set_page_config(
     page_title="Extrator de Guias Médicas",
     page_icon="🩺",
     layout="wide"
 )
 
-# AVISO IMPORTANTE: Em ambientes como o Streamlit Community Cloud, o Tesseract
-# é instalado via packages.txt e já está no PATH do sistema, portanto,
-# pytesseract o encontrará sem precisar de configuração manual do caminho.
 try:
     pytesseract.get_tesseract_version()
 except pytesseract.TesseractNotFoundError:
@@ -34,58 +30,59 @@ except pytesseract.TesseractNotFoundError:
     st.stop()
 
 # ==============================================================================
-# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR
+# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR (COM MELHORIAS)
 # ==============================================================================
 
 def preprocess_image(image):
-    """Aplica pré-processamento a uma imagem para melhorar a qualidade do OCR."""
-    img = image.convert('L')  # Converte para escala de cinza
+    """
+    Aplica um pré-processamento mais robusto para melhorar a qualidade do OCR.
+    - Converte para escala de cinza
+    - Aumenta o contraste
+    - Aplica binarização (thresholding) para criar uma imagem preto e branco pura
+    """
+    img = image.convert('L')
     enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(2.0) # Aumenta o contraste
-    img = img.filter(ImageFilter.SHARPEN) # Aplica filtro de nitidez
+    img = enhancer.enhance(2.0)
+    # Binarização: converte pixels cinzas para preto ou branco
+    img = img.point(lambda x: 0 if x < 180 else 255, '1')
     return img
 
 def extract_text_from_image(image_file):
-    """Extrai texto de um arquivo de imagem usando Tesseract OCR."""
+    """Extrai texto de uma imagem usando Tesseract com configuração otimizada."""
     try:
         image = Image.open(image_file)
         processed_image = preprocess_image(image)
-        # Usa o idioma 'por' (português) instalado via packages.txt
-        text = pytesseract.image_to_string(processed_image, lang='por')
+        # Configuração do Tesseract:
+        # --psm 6: Assume um único bloco uniforme de texto (bom para formulários)
+        # lang='por': Usa o idioma português
+        custom_config = r'--psm 6'
+        text = pytesseract.image_to_string(processed_image, lang='por', config=custom_config)
         return text
     except Exception as e:
         st.error(f"Erro ao processar a imagem '{image_file.name}': {e}")
         return ""
 
 def extract_text_from_pdf(pdf_file):
-    """
-    Extrai texto de um PDF. Se o PDF for baseado em imagem (escaneado),
-    converte suas páginas em imagens e aplica OCR.
-    """
+    """Extrai texto de PDF, com lógica de OCR aprimorada para páginas escaneadas."""
     try:
         pdf_bytes = pdf_file.read()
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         full_text = ""
-        is_scanned = False
+        has_readable_text = any(page.get_text().strip() for page in doc)
 
-        # Verifica se o PDF contém texto legível ou é escaneado
-        for page_num, page in enumerate(doc):
-            page_text = page.get_text().strip()
-            if len(page_text) < 50: # Heurística: se a página tem pouco ou nenhum texto, pode ser escaneada
-                is_scanned = True
-                st.info(f"Arquivo '{pdf_file.name}' detectado como escaneado. Ativando OCR.")
-                break # Sai do loop na primeira página escaneada
-            full_text += page_text + "\n"
-
-        if is_scanned:
-            full_text = ""
+        # Se o PDF não tiver texto legível, trate-o como totalmente escaneado
+        if not has_readable_text:
+            st.info(f"Arquivo '{pdf_file.name}' parece ser totalmente escaneado. Ativando OCR em todas as páginas.")
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                # Renderiza a página em alta resolução para melhor OCR
                 pix = page.get_pixmap(dpi=300)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 processed_image = preprocess_image(img)
-                full_text += pytesseract.image_to_string(processed_image, lang='por') + "\n"
+                custom_config = r'--psm 6'
+                full_text += pytesseract.image_to_string(processed_image, lang='por', config=custom_config) + "\n\n"
+        else: # Extrai texto diretamente
+            for page in doc:
+                full_text += page.get_text() + "\n\n"
 
         doc.close()
         return full_text
@@ -93,11 +90,12 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Erro ao processar o PDF '{pdf_file.name}': {e}")
         return ""
 
+
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX)
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX REFINADO)
 # ==============================================================================
 def extract_medical_data(text):
-    """Usa expressões regulares (regex) para extrair os campos de interesse."""
+    """Usa expressões regulares mais flexíveis e robustas."""
     data = {
         "Número GUIA": "Não encontrado",
         "Registro ANS": "Não encontrado",
@@ -105,26 +103,43 @@ def extract_medical_data(text):
         "Nome": "Não encontrado",
     }
     
-    # Regex são "tentativas" de encontrar padrões; podem precisar de ajustes
-    # para layouts de guias diferentes.
+    # --- Padrões de Regex Aprimorados ---
+    # Captura variações de rótulos e procura por números longos.
     patterns = {
-        "Número GUIA": r'(?:N[º°]?\s*da\s*Guia|GUIA\s*PRINCIPAL|N[úu]mero\s*da\s*Guia)\s*:?\s*(\d{12,})',
-        "Registro ANS": r'Registro\s*ANS\s*:?\s*(\d{6})',
-        "Data de Autorização": r'Data\s*(?:da\s*)?Autoriza[çc][ãa]o\s*:?\s*(\d{2}/\d{2}/\d{4})',
-        "Nome": r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*:?\s*([A-ZÀ-Ú\s]{5,})'
+        "Número GUIA": [
+            r'(?:N[º°]?\s*da\s*Guia|N[úu]mero\s*da\s*Guia|Guia\s*N[º°]?|GUIA\s*PRINCIPAL)\s*:?\s*(\d{12,})',
+            r'(\b\d{20}\b)' # Procura por um número de 20 dígitos solto no texto
+        ],
+        "Registro ANS": [
+            r'(?:Registro\s*ANS)\s*:?\s*(\d{6}\b)'
+        ],
+        "Data de Autorização": [
+            r'(?:Data\s*(?:da\s*)?Autoriza[çc][ãa]o)\s*:?\s*(\d{2}/\d{2}/\d{4})'
+        ],
+        "Nome": [
+            # Captura o texto na mesma linha após o rótulo, permitindo letras minúsculas.
+            r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*:?\s*([A-Za-zÀ-ú\s]{5,})'
+        ]
     }
 
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            # Limpa espaços extras do resultado encontrado
-            data[key] = re.sub(r'\s{2,}', ' ', match.group(1).strip())
-            
+    # Itera sobre cada campo e tenta encontrar uma correspondência
+    for key, regex_list in patterns.items():
+        for regex in regex_list:
+            match = re.search(regex, text, re.IGNORECASE)
+            if match:
+                # Limpa espaços extras e quebras de linha do resultado
+                found_text = match.group(1).strip().replace('\n', ' ')
+                data[key] = re.sub(r'\s{2,}', ' ', found_text)
+                break # Pára no primeiro padrão que funcionar para este campo
+
     return data
 
+
 # ==============================================================================
-# 4️⃣ FUNÇÃO PARA GERAR PLANILHA EXCEL
+# 4️⃣ e 5️⃣ - O restante do código (Geração de Excel e Interface) permanece o mesmo.
+# Copie e cole as seções 4 e 5 da versão anterior ou use o código abaixo.
 # ==============================================================================
+
 def to_excel(df_to_export):
     """Converte um DataFrame para um arquivo Excel em memória com formatação."""
     output = io.BytesIO()
@@ -141,7 +156,6 @@ def to_excel(df_to_export):
         for col_num, value in enumerate(df_to_export.columns.values):
             worksheet.write(0, col_num, value, header_format)
         
-        # Auto-ajuste da largura das colunas
         for idx, col in enumerate(df_to_export):
             series = df_to_export[col]
             max_len = max((series.astype(str).map(len).max(), len(str(series.name)))) + 2
@@ -149,14 +163,9 @@ def to_excel(df_to_export):
             
     return output.getvalue()
 
-# ==============================================================================
-# 5️⃣ INTERFACE PRINCIPAL DO STREAMLIT
-# ==============================================================================
-
 st.title("🩺 Extrator de Informações de Guias Médicas")
 st.markdown("Faça o upload de guias em formato PDF ou imagem. O sistema usará OCR para extrair os dados e apresentá-los em uma tabela editável.")
 
-# --- Barra Lateral (Sidebar) ---
 with st.sidebar:
     st.header("📤 Upload de Arquivos")
     uploaded_files = st.file_uploader(
@@ -179,7 +188,6 @@ with st.sidebar:
         """
     )
 
-# --- Lógica de Processamento e Exibição ---
 if 'processed_data' not in st.session_state:
     st.session_state.processed_data = pd.DataFrame()
 
@@ -221,7 +229,6 @@ if uploaded_files:
         df = pd.DataFrame(all_data)[["Arquivo", "Número GUIA", "Registro ANS", "Data de Autorização", "Nome"]]
         st.session_state.processed_data = df
 
-# --- Tabela de Dados Editável e Botões de Download ---
 if not st.session_state.processed_data.empty:
     st.header("📋 Resultados Editáveis")
     
