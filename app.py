@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINAL E COMPLETA - V4, Limpa)
+# app.py (VERSÃO FINAL E COMPLETA - V4, Otimizada)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
@@ -36,7 +36,7 @@ def preprocess_image(image):
     """Aplica um pré-processamento robusto (contraste alto e nitidez)."""
     img = image.convert('L')
     enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(3.0) 
+    img = enhancer.enhance(3.0)
     img = img.filter(ImageFilter.SHARPEN)
     img = img.point(lambda x: 0 if x < 150 else 255, '1')
     return img
@@ -50,7 +50,7 @@ def extract_text_from_image(file_object):
         text = pytesseract.image_to_string(processed_image, lang='por', config=custom_config)
         return text
     except Exception as e:
-        st.error(f"Erro ao processar a imagem: {e}") 
+        st.error(f"Erro ao processar a imagem: {e}")
         return ""
 
 def extract_text_from_pdf(pdf_file):
@@ -66,10 +66,10 @@ def extract_text_from_pdf(pdf_file):
             st.write(f"Arquivo parece ser totalmente escaneado. Ativando OCR em todas as páginas.")
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
-                pix = page.get_pixmap(dpi=300) 
+                pix = page.get_pixmap(dpi=300)
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 processed_image = preprocess_image(img)
-                custom_config = r'--psm 3' 
+                custom_config = r'--psm 3'
                 full_text += pytesseract.image_to_string(processed_image, lang='por', config=custom_config) + "\n\n"
         else:
             for page in doc:
@@ -83,7 +83,7 @@ def extract_text_from_pdf(pdf_file):
 
 
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX FINAL E PRECISO)
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX OTIMIZADO E PRECISO)
 # ==============================================================================
 def extract_medical_data(text):
     """Usa expressões regulares específicas e pré-limpeza para a Guia SP/SADT."""
@@ -93,57 +93,60 @@ def extract_medical_data(text):
         "Data de Autorização": "Não encontrado",
         "Nome": "Não encontrado",
     }
-    
-    # Pré-limpeza crucial: Remove quebras de linha duplas e ruídos de tabela
-    cleaned_text = re.sub(r'[\n\r]+', ' ', text)
-    cleaned_text = re.sub(r'[\*\[\]]', '', cleaned_text)
-    cleaned_text = re.sub(r'\|', ' ', cleaned_text) 
-    
-    # NOVO TRUQUE: Remove a seção "Nome Social" inteira para evitar confusão.
-    cleaned_text = re.sub(r'89\s*-\s*Nome\s*Social.*?\d{1,2}\s*-\s*', ' ', cleaned_text, flags=re.IGNORECASE)
 
-    # --- Padrões de Regex Otimizados ---
+    # Pré-limpeza crucial: Remove quebras de linha e ruídos comuns de OCR
+    cleaned_text = re.sub(r'[\n\r]+', ' ', text)
+    cleaned_text = re.sub(r'[\*\[\]\|]', ' ', cleaned_text) # Remove *, [], |
+    cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text)     # Normaliza espaços
+
+    # --- Padrões de Regex Otimizados e Resilientes ---
     patterns = {
-        # 1. Número GUIA (Foca no Número da Guia Principal 17456856)
+        # 1. Registro ANS (Flexível para ruídos entre o rótulo e o número)
+        "Registro ANS": [
+            r'(?:Registro\s*ANS|ANS)\s*.*?(\d{6}\b)'
+        ],
+
+        # 2. Número GUIA (Flexível para variações de "Nº")
         "Número GUIA": [
-            r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})', 
-            # Alternativa: número longo (o que foi capturado antes)
+            # Prioridade 1: Padrão mais robusto para "Nº Guia Principal"
+            r'N[ºo°\.\s-]*\s*Guia\s*Principal\s*[:\s]*(\d{6,10})\b',
+            # Prioridade 2: Padrão original como fallback
+            r'(?:Nº\s*Guia\s*Principal)\s*(\d{6,10})',
+            # Prioridade 3: Fallback para o número longo da operadora
             r'Guia\s*Atribuído\s*pela\s*Operadora\s*(\d{20})',
         ],
-        
-        # 2. Registro ANS (419010) - Simplificado para apenas 6 dígitos após ANS
-        "Registro ANS": [
-            r'ANS\s*(\d{6}\b)', 
-            r'(?:Registro\s*ANS)\s*(\d{6}\b)'
-        ],
-        
-        # 3. Data de Autorização (DD/MM/AAAA)
+
+        # 3. Data de Autorização (Já estava bom, mantido)
         "Data de Autorização": [
             r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})'
         ],
-        
-        # 4. Nome do Beneficiário (MATHEUS PEREIRA BOIKO)
+
+        # 4. Nome do Beneficiário (Usa captura não-gananciosa e lookahead para precisão)
         "Nome": [
-            # Captura a sequência de MAIÚSCULAS após o rótulo "10- Nome" ou "Nome"
-            r'\d{1,2}\s*-\s*Nome\s*([A-ZÀ-Ú\s]{5,}[A-ZÀ-Ú])',
+            # Prioridade 1: Padrão mais preciso usando o campo "10 - Nome" como âncora e
+            # o próximo campo (ex: "11 -") como ponto de parada.
+            r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s]+?)\s*(?=\d{1,2}\s*-)',
+            # Prioridade 2: Fallback mais genérico
             r'(?:Nome\s*(?:do\s*Benefici[áa]rio)?|Benefici[áa]rio)\s*([A-ZÀ-Ú\s]{5,}[A-ZÀ-Ú])'
         ]
     }
 
-    # Itera e captura
+    # Itera e captura o primeiro resultado encontrado para cada campo
     for key, regex_list in patterns.items():
         for regex in regex_list:
-            match = re.search(regex, cleaned_text, re.IGNORECASE) 
+            match = re.search(regex, cleaned_text, re.IGNORECASE)
             if match:
                 found_text = match.group(1).strip()
+                # Limpeza final de espaços múltiplos que possam ter sido capturados
                 data[key] = re.sub(r'\s{2,}', ' ', found_text)
-                break 
+                break # Para no primeiro padrão bem-sucedido para este campo
 
-    # Correção de Pós-processamento para o Nome: remove o lixo do próximo campo 
+    # O Pós-processamento para o Nome ainda é útil como uma segunda camada de segurança,
+    # caso o regex de fallback seja acionado.
     if data["Nome"] != "Não encontrado":
-        # Remove a parte que se parece com o início do próximo rótulo (número seguido de - ou a letra H)
-        data["Nome"] = re.sub(r'\s*(H|\d{1,2})\s*-\s*.*$', '', data["Nome"]).strip()
-        
+        # Remove qualquer coisa que se pareça com o início de um novo campo (ex: "11 - ...")
+        data["Nome"] = re.sub(r'\s*\d{1,2}\s*-\s*.*$', '', data["Nome"]).strip()
+
     return data
 
 
@@ -158,20 +161,20 @@ def to_excel(df_to_export):
         df_to_export.to_excel(writer, index=False, sheet_name='Guias_Medicas')
         workbook = writer.book
         worksheet = writer.sheets['Guias_Medicas']
-        
+
         header_format = workbook.add_format({
             'bold': True, 'text_wrap': True, 'valign': 'top',
             'fg_color': '#2E8B57', 'font_color': 'white', 'border': 1
         })
-        
+
         for col_num, value in enumerate(df_to_export.columns.values):
             worksheet.write(0, col_num, value, header_format)
-        
+
         for idx, col in enumerate(df_to_export):
             series = df_to_export[col]
             max_len = max((series.astype(str).map(len).max(), len(str(series.name)))) + 2
             worksheet.set_column(idx, idx, max_len)
-            
+
     return output.getvalue()
 
 st.title("🩺 Extrator de Informações de Guias Médicas")
@@ -186,9 +189,9 @@ with st.sidebar:
     )
     st.header("🛠️ Opções")
     show_debug_text = st.checkbox("Mostrar texto extraído (debug)")
-    
+
     st.divider()
-    
+
     st.header("📖 Como Usar")
     st.markdown(
         """
@@ -215,24 +218,24 @@ if uploaded_files:
             uploaded_file.seek(0)
             file_io = io.BytesIO(uploaded_file.read())
             file_io.name = file_name
-            
+
             with st.status(f"Analisando '{file_name}'...", expanded=False) as status:
                 file_extension = os.path.splitext(file_name)[1].lower()
                 text = ""
-                
+
                 if file_extension == ".pdf":
                     st.write("Lendo arquivo PDF...")
-                    text = extract_text_from_pdf(file_io) 
+                    text = extract_text_from_pdf(file_io)
                 elif file_extension in [".png", ".jpg", ".jpeg"]:
                     st.write("Lendo arquivo de imagem...")
-                    text = extract_text_from_image(file_io) 
-                
+                    text = extract_text_from_image(file_io)
+
                 st.write("Extraindo dados do texto...")
                 extracted_data = extract_medical_data(text)
-                
+
                 # CORREÇÃO DO BUG: 'warning' substituído por 'error'
                 if all(v == "Não encontrado" for v in extracted_data.values()):
-                    status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True) 
+                    status.update(label=f"Nenhum dado encontrado em '{file_name}'", state="error", expanded=True)
                 else:
                     status.update(label=f"Extração concluída para '{file_name}'!", state="complete", expanded=False)
 
@@ -241,12 +244,12 @@ if uploaded_files:
 
                 if show_debug_text:
                     st.expander(f"📝 Texto bruto extraído de '{file_name}'").text_area("", text, height=250)
-        
+
         except Exception as e:
             # Trata erros críticos
             st.error(f"Erro crítico ao processar '{file_name}'. Detalhe: {e}")
-            
-    
+
+
     progress_bar.empty()
 
     if all_data:
@@ -255,7 +258,7 @@ if uploaded_files:
 
 if not st.session_state.processed_data.empty:
     st.header("📋 Resultados Editáveis")
-    
+
     edited_df = st.data_editor(
         st.session_state.processed_data,
         num_rows="dynamic",
