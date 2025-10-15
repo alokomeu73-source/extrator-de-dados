@@ -1,11 +1,11 @@
-# app.py (VERSÃO REESTRUTURADA - Foco em Copiar Dados)
+# app.py (VERSÃO OTIMIZADA)
 
 # ==============================================================================
 # 1️⃣ CONFIGURAÇÃO E IMPORTAÇÕES
 # ==============================================================================
 import streamlit as st
 import pandas as pd
-import fitz  # PyMuPDF
+import fitz # PyMuPDF
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 import re
@@ -14,27 +14,27 @@ import os
 from datetime import datetime
 
 st.set_page_config(
-    page_title="Extrator de Guias (Copiar Texto)",
+    page_title="Extrator de Guias (Otimizado)",
     page_icon="📋",
     layout="wide"
 )
 
-# Verifica a instalação do Tesseract
+# Verifica a instalação do Tesseract.
 try:
     pytesseract.get_tesseract_version()
 except pytesseract.TesseractNotFoundError:
     st.error(
         "Tesseract OCR não foi encontrado. "
-        "Certifique-se de que o Tesseract está instalado e acessível no PATH do sistema."
+        "Certifique-se de que está instalado e acessível no PATH do sistema."
     )
     st.stop()
 
 # ==============================================================================
-# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR (Baseado na V4)
+# 2️⃣ FUNÇÕES DE EXTRAÇÃO E OCR
 # ==============================================================================
 
 def preprocess_image(image):
-    """Aplica um pré-processamento para otimizar o OCR."""
+    """Aplica pré-processamento para otimizar o OCR."""
     img = image.convert('L')
     enhancer = ImageEnhance.Contrast(img)
     img = enhancer.enhance(2.5)
@@ -46,7 +46,7 @@ def extract_text_from_image(file_object):
     try:
         image = Image.open(file_object)
         processed_image = preprocess_image(image)
-        # O layout automático (PSM 3) costuma ser um bom ponto de partida
+        # O psm 3 (layout automático) é geralmente a melhor opção para documentos
         custom_config = r'--psm 3'
         text = pytesseract.image_to_string(processed_image, lang='por', config=custom_config)
         return text
@@ -61,29 +61,31 @@ def extract_text_from_pdf(pdf_file):
         doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
         full_text = ""
         
-        # Se o PDF não tem texto extraível, assume-se que é escaneado
-        if not any(page.get_text().strip() for page in doc):
-            st.write(f"Arquivo PDF parece escaneado. Aplicando OCR...")
+        has_native_text = any(page.get_text().strip() for page in doc)
+        
+        if not has_native_text:
+            st.warning("Arquivo PDF parece escaneado. Aplicando OCR...")
             for page in doc:
                 pix = page.get_pixmap(dpi=300)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                full_text += extract_text_from_image(io.BytesIO(pix.tobytes("png"))) + "\n\n"
+                img_data = io.BytesIO(pix.tobytes("png"))
+                full_text += extract_text_from_image(img_data) + "\n\n"
         else:
             for page in doc:
                 full_text += page.get_text() + "\n\n"
-
         doc.close()
         return full_text
     except Exception as e:
         st.error(f"Erro ao processar o PDF: {e}")
         return ""
 
-
 # ==============================================================================
-# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX OTIMIZADO)
+# 3️⃣ FUNÇÃO DE EXTRAÇÃO DE DADOS (REGEX ROBUSTO)
 # ==============================================================================
 def extract_medical_data(text):
-    """Usa Regex para extrair os campos principais da Guia SP/SADT."""
+    """
+    Usa Regex aprimorado para extrair os campos principais da Guia SP/SADT,
+    levando em conta as variações do OCR.
+    """
     data = {
         "Número GUIA": "Não encontrado",
         "Registro ANS": "Não encontrado",
@@ -91,34 +93,50 @@ def extract_medical_data(text):
         "Nome": "Não encontrado",
     }
 
+    # Limpeza e normalização do texto para facilitar o Regex
     cleaned_text = re.sub(r'[\n\r]+', ' ', text)
     cleaned_text = re.sub(r'\s{2,}', ' ', cleaned_text)
-
+    
+    # 🎯 Regex para os campos, ajustado para o layout da sua guia
     patterns = {
-        "Registro ANS": r'(?:Registro\s*ANS|ANS)\s*.*?(\d{6})\b',
-        "Número GUIA": r'Guia\s*Principal\s*[:\s]*(\d+)\b',
-        "Data de Autorização": r'Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})',
-        "Nome": r'10\s*-\s*Nome\s*([A-ZÀ-Ú\s]+?)\s*(?=\d{1,2}\s*-)'
+        # Número GUIA (Campo 2): Procura pelo rótulo "2 - Número GUIA"
+        "Número GUIA": r'2\s*-\s*N[uú]mero\s*GUIA\s*.*?\s*(\d+)',
+        
+        # Nome do Beneficiário (Campo 10): Captura o texto entre o rótulo do nome e o próximo campo numerado (ex: 11)
+        "Nome": r'10\s*-\s*Nome(?:\s*do\s*Benefici[áa]rio)?\s*([A-ZÀ-Ú\s]+?)(?=\s*\d{1,2}\s*-|\s*Data\s*do\s*Nascimento)',
+        
+        # Registro ANS: O Registro ANS do beneficiário (419010) está no campo 12.
+        # Captura os primeiros 6 dígitos do número do cartão de saúde.
+        "Registro ANS": r'12\s*-\s*N[uú]mero\s*do\s*Cart[ãa]o\s*Nacional\s*de\s*Sa[uú]de.*?\s*(\d{6})\d*',
+        
+        # Data de Autorização (Campo 4): Padrão confiável para a data
+        "Data de Autorização": r'4\s*-\s*Data\s*de\s*Autoriza[çc][ãa]o\s*.*?(\d{2}/\d{2}/\d{4})',
     }
 
     for key, regex in patterns.items():
         match = re.search(regex, cleaned_text, re.IGNORECASE)
         if match:
-            data[key] = match.group(1).strip()
+            extracted_value = match.group(1).strip()
+            # Tratamento especial para o nome
+            if key == "Nome":
+                # Capitaliza o nome
+                data[key] = " ".join(word.capitalize() for word in extracted_value.split())
+            else:
+                data[key] = extracted_value
 
     return data
 
 # ==============================================================================
-# 4️⃣ NOVA FUNÇÃO PARA FORMATAR SAÍDA DE TEXTO
+# 4️⃣ FUNÇÃO PARA FORMATAR SAÍDA DE TEXTO
 # ==============================================================================
-
 def format_data_for_copying(df):
     """Formata o DataFrame em uma string de texto para fácil cópia."""
     output_lines = []
     output_lines.append(f"## RESUMO DE {len(df)} GUIAS PROCESSADAS ##")
-    output_lines.append("-" * 40)
+    output_lines.append("-" * 45)
     
-    for _, row in df.iterrows():
+    for index, row in df.iterrows():
+        output_lines.append(f"### GUIA {index + 1} ###")
         output_lines.append(f"Arquivo: {row['Arquivo']}")
         output_lines.append(f"Nome do Beneficiário: {row['Nome']}")
         output_lines.append(f"Número da Guia: {row['Número GUIA']}")
@@ -131,9 +149,8 @@ def format_data_for_copying(df):
 # ==============================================================================
 # 5️⃣ INTERFACE PRINCIPAL DO STREAMLIT
 # ==============================================================================
-
 st.title("📋 Extrator de Guias para Copiar Texto")
-st.markdown("Faça o upload de guias (PDF ou imagem) e o sistema extrairá os dados em um formato de texto simples para você copiar.")
+st.markdown("Faça o upload de guias (PDF ou imagem) e o sistema extrairá os dados principais.")
 
 with st.sidebar:
     st.header("📤 Upload de Arquivos")
@@ -176,17 +193,22 @@ if uploaded_files:
 
         except Exception as e:
             st.error(f"Erro crítico ao processar '{file_name}': {e}")
+            all_data.append({"Arquivo": file_name, "Nome": "ERRO", "Número GUIA": "ERRO", "Registro ANS": "ERRO", "Data de Autorização": "ERRO"})
 
     progress_bar.empty()
 
     if all_data:
         df = pd.DataFrame(all_data)[["Arquivo", "Nome", "Número GUIA", "Registro ANS", "Data de Autorização"]]
         
-        st.header("✅ Dados Extraídos")
-        st.markdown("Abaixo está o texto consolidado. Use o ícone no canto superior direito da caixa para copiar tudo.")
+        st.header("✅ Dados Extraídos (Formato Tabela)")
+        st.dataframe(df, use_container_width=True)
+        
+        st.header("📝 Resultado para Cópia")
+        st.markdown("Use a caixa abaixo para copiar o texto consolidado.")
         
         formatted_text = format_data_for_copying(df)
         st.text_area("Resultado para cópia:", formatted_text, height=400)
 
+    st.balloons()
 else:
-    st.info("Aguardando o upload de arquivos para iniciar o processamento.")
+    st.info("Aguardando o upload de arquivos para iniciar o processamento. Faça o upload no painel lateral.")
